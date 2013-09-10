@@ -15,6 +15,9 @@
 #define MAXBUF   8192  /* max I/O buffer size */
 extern char **environ;
 
+#define ROOT "./www"
+#define PORT 8888
+
 
 void doit(int fd);
 void read_requesthdrs(rio_t *rp);
@@ -32,10 +35,13 @@ int main(int argc, char const *argv[])
 
     // check CLI args
     if (argc != 2) {
-        fprintf(stderr, "usage: %s <port>\n", argv[0]);
-        exit(1);
+        printf("Not defined port, use default port 8888...");
+        port = PORT;
     }
-    port = atoi(argv[1]);
+    else {
+        port = atoi(argv[1]);
+        printf("Now listening to %d\n", port);
+    }
 
     if((listenfd = open_listenfd(port)) < 0)
         perror("open_listenfd");
@@ -132,10 +138,10 @@ int parse_uri(char *uri, char *filename, char *cgiargs)
 
     if (!strstr(uri, "cgi-bin")) {  /* Static content */
     strcpy(cgiargs, "");
-    strcpy(filename, ".");
+    strcpy(filename, ROOT);
     strcat(filename, uri);  // This is not safe enough, may have stackoverflow attack
     if (uri[strlen(uri)-1] == '/')
-        strcat(filename, "home.html");  // add default index page
+        strcat(filename, "index.html");  // add default index page
     return 1;
     }
     else {  /* Dynamic content */
@@ -147,7 +153,7 @@ int parse_uri(char *uri, char *filename, char *cgiargs)
         }
         else
             strcpy(cgiargs, "");
-        strcpy(filename, ".");
+        strcpy(filename, ROOT);
         strcat(filename, uri);
         return 0;
     }
