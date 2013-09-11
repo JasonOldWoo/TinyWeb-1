@@ -10,12 +10,14 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include "wrapper.h"
+#include <sys/sendfile.h>
+#include <sys/wait.h>
 
 #define MAXLINE  8192  /* max text line length */
 #define MAXBUF   8192  /* max I/O buffer size */
 extern char **environ;
 
-#define ROOT "./www"
+#define ROOT "/home/shanks/project/WebServer/www"
 #define PORT 8888
 
 
@@ -35,8 +37,8 @@ int main(int argc, char const *argv[])
 
     // check CLI args
     if (argc != 2) {
-        printf("Not defined port, use default port 8888...");
         port = PORT;
+        printf("Not defined port, use default port %d...\n", port);
     }
     else {
         port = atoi(argv[1]);
@@ -78,6 +80,7 @@ void doit(int fd)
                 "Micro does not implement this method");
         return;
     }
+    printf("request line: %s\n", buf);
     read_requesthdrs(&rio);
 
     /* Parse URI from GET request */
@@ -136,7 +139,7 @@ int parse_uri(char *uri, char *filename, char *cgiargs)
 {
     char *ptr;
 
-    if (!strstr(uri, "cgi-bin")) {  /* Static content */
+    if (!strstr(uri, "/cgi-bin")) {  /* Static content */
     strcpy(cgiargs, "");
     strcpy(filename, ROOT);
     strcat(filename, uri);  // This is not safe enough, may have stackoverflow attack
@@ -170,15 +173,19 @@ void serve_static(int fd, char *filename, int filesize)
     sprintf(buf, "HTTP/1.1 200 OK\r\n");
     sprintf(buf, "%sServer: Micro Web Server\r\n", buf);
     sprintf(buf, "%sContent-length: %d\r\n", buf, filesize);
+    // use another '\r\n'(aka. space line) to indicate the ending of response header,
     sprintf(buf, "%sContent-type: %s\r\n\r\n", buf, filetype);
     rio_writen(fd, buf, strlen(buf));
 
     /* Send response body to client */
     srcfd = open(filename, O_RDONLY, 0);
-    srcp = mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
+    // Memory map IO: read only, copy on write, return the map area address
+    // srcp = mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
+    // close(srcfd);
+    // rio_writen(fd, srcp, filesize);
+    // munmap(srcp, filesize);
+    sendfile(fd, srcfd, 0, filesize);
     close(srcfd);
-    rio_writen(fd, srcp, filesize);
-    munmap(srcp, filesize);
 }
 
 
@@ -199,20 +206,29 @@ void get_filetype(char *filename, char *filetype)
 void serve_dynamic(int fd, char *filename, char *cgiargs)
 {
     char buf[MAXLINE], *emptylist[] = { NULL };
+    FILE *fpout;
 
-    /* Return first part of HTTP response */
-    sprintf(buf, "HTTP/1.1 200 OK\r\n");
-    rio_writen(fd, buf, strlen(buf));
-    sprintf(buf, "Server: Micro Web Server\r\n");
-    rio_writen(fd, buf, strlen(buf));
+    // if (fork() == 0) { /* child */
+    //     /* Real server would set all CGI vars here */
+    //     setenv("QUERY_STRING", cgiargs, 1);
+    //     // int dup2(int oldfd, int newfd); dup2() makes newfd be the copy of oldfd, closing newfd first if necessary.
+    //     dup2(fd, STDOUT_FILENO);         /* Redirect stdout to client */
+    //     ret = execve(filename, emptylist, environ); /* Run CGI program */
+    // }
+    // waitpid(-1, NULL, 0); /* Parent waits for and reaps child */
 
-    if (fork() == 0) { /* child */
-        /* Real server would set all CGI vars here */
-        setenv("QUERY_STRING", cgiargs, 1);
-        dup2(fd, STDOUT_FILENO);         /* Redirect stdout to client */
-        execve(filename, emptylist, environ); /* Run CGI program */
+    if (fpout = popen(filename, "r")){
+        sprintf(buf, "HTTP/1.1 200 OK\r\n");
+        strcat(buf, "Server: Micro Web Server\r\n\r\n");
+        rio_writen(fd, buf, strlen(buf));
+        while (fread(buf, 1, MAXLINE, fpout) != 0) {
+            rio_writen(fd, buf, strlen(buf));
+        }
+        pclose(fpout);
     }
-    wait(NULL); /* Parent waits for and reaps child */
+    else {
+        client_error(fd, filename, "500", "Internal Error", "Micro couldn't read the file");
+    }
 }
 
 
