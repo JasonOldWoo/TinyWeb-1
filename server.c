@@ -206,29 +206,43 @@ void get_filetype(char *filename, char *filetype)
 void serve_dynamic(int fd, char *filename, char *cgiargs)
 {
     char buf[MAXLINE], *emptylist[] = { NULL };
-    FILE *fpout;
+    int fp[2];
+    pid_t pid;
+    int ret = 0;
+    // FILE *fpout;
 
-    // if (fork() == 0) { /* child */
-    //     /* Real server would set all CGI vars here */
-    //     setenv("QUERY_STRING", cgiargs, 1);
-    //     // int dup2(int oldfd, int newfd); dup2() makes newfd be the copy of oldfd, closing newfd first if necessary.
-    //     dup2(fd, STDOUT_FILENO);         /* Redirect stdout to client */
-    //     ret = execve(filename, emptylist, environ); /* Run CGI program */
-    // }
-    // waitpid(-1, NULL, 0); /* Parent waits for and reaps child */
-
-    if (fpout = popen(filename, "r")){
-        sprintf(buf, "HTTP/1.1 200 OK\r\n");
-        strcat(buf, "Server: Micro Web Server\r\n\r\n");
-        rio_writen(fd, buf, strlen(buf));
-        while (fread(buf, 1, MAXLINE, fpout) != 0) {
-            rio_writen(fd, buf, strlen(buf));
+    // create two file descriptor(a pipe), fp[1] points to fp[0]
+    if (pipe(fp) < 0) {
+        printf("pipe error\n");
+        return;
+    }
+    if (fork() == 0) { /* child */
+        close(fp[0]);   // close child's read pipe
+        /* Real server would set all CGI vars here */
+        setenv("QUERY_STRING", cgiargs, 1);
+        // int dup2(int oldfd, int newfd); dup2() makes newfd be the copy of oldfd, closing newfd first if necessary.
+        dup2(fp[1], STDOUT_FILENO);         /* Redirect stdout to client */
+        ret = execve(filename, emptylist, environ); /* Run CGI program */
+        if (ret == 0) {
+            printf("HTTP/1.1 200 OK\r\n");
+            printf("Server: Micro Web Server\r\n\r\n");
         }
-        pclose(fpout);
     }
-    else {
-        client_error(fd, filename, "500", "Internal Error", "Micro couldn't read the file");
-    }
+    waitpid(-1, NULL, 0); /* Parent waits for and reaps child */
+
+    // if (fpout = popen(filename, "r")){
+    //     sprintf(buf, "HTTP/1.1 200 OK\r\n");
+    //     strcat(buf, "Server: Micro Web Server\r\n\r\n");
+    //     rio_writen(fd, buf, strlen(buf));
+    //     memset(buf, 0, sizeof(buf));
+    //     while (fread(buf, 1, MAXLINE, fpout) != 0) {
+    //         rio_writen(fd, buf, strlen(buf));
+    //     }
+    //     pclose(fpout);
+    // }
+    // else {
+    //     client_error(fd, filename, "500", "Internal Error", "Micro couldn't read the file");
+    // }
 }
 
 
